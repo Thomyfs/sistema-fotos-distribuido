@@ -1,0 +1,47 @@
+services:
+  frontend-ui:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - api-core
+    networks:
+      - red-distribuida
+
+  api-core:
+    build: ./api-core
+    ports:
+      - "8000:8000"
+    volumes:
+      - photo-storage:/storage
+    depends_on:
+      - database-node
+      - media-worker
+    networks:
+      - red-distribuida
+
+  media-worker:
+    build: ./media-worker
+    volumes:
+      - photo-storage:/storage
+    networks:
+      - red-distribuida
+
+  database-node:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - red-distribuida
+
+volumes:
+  photo-storage:
+  mongo-data:
+
+networks:
+  red-distribuida:
+    driver: bridge
