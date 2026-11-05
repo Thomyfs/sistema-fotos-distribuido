@@ -6,8 +6,10 @@ import httpx, os, json
 from datetime import datetime
 
 app = FastAPI()
+# Configurar cors
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# Crea la carpeta '/storage' dentro del contenedor si no existe y la deja accesible en la ruta
 os.makedirs("/storage", exist_ok=True)
 app.mount("/images", StaticFiles(directory="/storage"), name="images")
 
@@ -15,8 +17,10 @@ client = MongoClient("mongodb://database-node:27017/")
 db = client["photoshare_db"]
 photos_col = db["photos"]
 
+# Lista de conexiones activas
 active_connections = []
 
+#Endpoint comunicacion tiempo real con clientes
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()

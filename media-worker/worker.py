@@ -3,9 +3,12 @@ from PIL import Image
 import io, os, uuid, socket
 
 app = FastAPI()
+
+# Ruta para guardar fotos
 STORAGE_DIR = "/storage"
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
+# Endpoint que recibe la imagen
 @app.post("/process")
 async def process_image(file: UploadFile = File(...)):
     contents = await file.read()

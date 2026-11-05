@@ -1,4 +1,7 @@
+# Define contenedores
 services:
+
+  # Servicio frontend
   frontend-ui:
     image: nginx:alpine
     ports:
@@ -10,6 +13,7 @@ services:
     networks:
       - red-distribuida
 
+  # Backend
   api-core:
     build: ./api-core
     ports:
@@ -22,6 +26,7 @@ services:
     networks:
       - red-distribuida
 
+  # Procesamiento en segundo plano
   media-worker:
     build: ./media-worker
     volumes:
@@ -29,6 +34,7 @@ services:
     networks:
       - red-distribuida
 
+  # Base de datos
   database-node:
     image: mongo:7.0
     ports:
