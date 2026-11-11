@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhotoShare Distribuido</title>
+<style>
+  :root{
+    --bg:#f6f4ef; --card:#ffffff; --ink:#1d2433; --muted:#6b7385; --line:#e4e0d6;
+    --accent:#0f766e; --accent-ink:#ffffff; --warn:#b45309; --ok:#15803d; --bad:#b91c1c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+  header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;
+         padding:18px max(16px,calc((100vw - 1040px)/2));border-bottom:1px solid var(--line);background:var(--card)}
+  h1{font-size:1.25rem;margin:0;letter-spacing:-.01em}
+  h1 small{display:block;font-weight:400;font-size:.8rem;color:var(--muted);margin-top:2px}
+  #status{font-size:.85rem;display:flex;align-items:center;gap:8px;color:var(--muted)}
+  #dot{width:10px;height:10px;border-radius:50%;background:var(--warn)}
+  #dot.on{background:var(--ok)} #dot.off{background:var(--bad)}
+  main{max-width:1040px;margin:0 auto;padding:24px 16px 64px;display:grid;gap:24px}
+  form{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;display:grid;gap:14px}
+  form h2{margin:0;font-size:1rem}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  label{display:grid;gap:6px;font-size:.85rem;color:var(--muted)}
+  input[type=text],input[type=file]{font:inherit;color:var(--ink);padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff}
+  input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button{font:inherit;font-weight:600;padding:11px 18px;border:0;border-radius:8px;background:var(--accent);color:var(--accent-ink);cursor:pointer;justify-self:start}
+  button:disabled{opacity:.55;cursor:wait}
+  #msg{font-size:.85rem;min-height:1.2em}
+  #msg.err{color:var(--bad)} #msg.ok{color:var(--ok)}
+  #gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+  .photo{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+  .photo.new{animation:pop .6s ease-out}
+  @keyframes pop{from{transform:scale(.96);box-shadow:0 0 0 3px var(--accent)}to{transform:none;box-shadow:none}}
+  .photo img{width:100%;aspect-ratio:4/3;object-fit:cover;background:#ddd;display:block}
+  .meta{padding:12px 14px;display:grid;gap:4px}
+  .meta strong{font-size:.95rem}
+  .meta span{font-size:.85rem;color:var(--muted)}
+  .node{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.75rem;background:#eef6f5;color:var(--accent);
+        padding:2px 6px;border-radius:4px;width:fit-content}
+  .empty{color:var(--muted);text-align:center;padding:40px 0;grid-column:1/-1}
+  @media(max-width:560px){.row{grid-template-columns:1fr}}
+  @media(prefers-reduced-motion:reduce){.photo.new{animation:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>PhotoShare Distribuido<small>Frontend · API · Worker · MongoDB</small></h1>
+  <div id="status"><span id="dot"></span><span id="status-text">Conectando…</span></div>
+</header>
+
+<main>
+  <form id="upload-form">
+    <h2>Compartir una foto</h2>
+    <div class="row">
+      <label>Autor<input type="text" id="author" required maxlength="40" placeholder="Tu nombre"></label>
+      <label>Descripción<input type="text" id="caption" required maxlength="120" placeholder="¿Qué se ve en la foto?"></label>
+    </div>
+    <label>Imagen<input type="file" id="file" accept="image/*" required></label>
+    <button type="submit" id="send">Subir foto</button>
+    <div id="msg" role="status" aria-live="polite"></div>
+  </form>
+
+  <section>
+    <div id="gallery" aria-live="polite"></div>
+  </section>
+</main>
+
+<script>
+  // La API corre en el puerto 8000 del mismo host desde el que se abre el frontend
+  const API = `${location.protocol}//${location.hostname || "localhost"}:8000`;
+  const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.hostname || "localhost"}:8000/ws`;
+
+  const gallery = document.getElementById("gallery");
+  const dot = document.getElementById("dot");
+  const statusText = document.getElementById("status-text");
+  const msg = document.getElementById("msg");
+
+  function setStatus(state, text){ dot.className = state; statusText.textContent = text; }
+  function setMsg(text, cls){ msg.textContent = text; msg.className = cls || ""; }
+
+  function card(p, isNew){
+    const el = document.createElement("article");
+    el.className = "photo" + (isNew ? " new" : "");
+    const img = document.createElement("img");
+    img.src = p.url; img.alt = p.caption; img.loading = "lazy";
+    const meta = document.createElement("div"); meta.className = "meta";
+    const a = document.createElement("strong"); a.textContent = p.author;
+    const c = document.createElement("span"); c.textContent = p.caption;
+    const t = document.createElement("span"); t.textContent = p.timestamp;
+    const n = document.createElement("span"); n.className = "node"; n.textContent = "procesada por: " + p.worker_node;
+    meta.append(a, c, t, n);
+    el.append(img, meta);
+    return el;
+  }
+
+  function clearEmpty(){ const e = gallery.querySelector(".empty"); if (e) e.remove(); }
+
+  async function loadPhotos(){
+    try{
+      const res = await fetch(`${API}/photos`);
+      const photos = await res.json();
+      gallery.replaceChildren();
+      if (!photos.length){
+        gallery.innerHTML = '<p class="empty">Aún no hay fotos. ¡Sube la primera!</p>';
+        return;
+      }
+      photos.forEach(p => gallery.append(card(p, false)));
+    }catch(e){
+      gallery.innerHTML = '<p class="empty">No se pudo contactar con la API.</p>';
+    }
+  }
+
+  // Tiempo real: el servidor notifica cada nueva foto a todos los clientes conectados
+  let ws, retry = 1000;
+  function connect(){
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => { setStatus("on", "Tiempo real activo (WebSocket)"); retry = 1000; ws.send("hola"); };
+    ws.onmessage = ev => {
+      const p = JSON.parse(ev.data);
+      clearEmpty();
+      gallery.prepend(card(p, true));
+    };
+    ws.onclose = () => {
+      setStatus("off", "Desconectado, reintentando…");
+      setTimeout(connect, retry); retry = Math.min(retry * 2, 8000);
+    };
+    ws.onerror = () => ws.close();
+  }
+
+  document.getElementById("upload-form").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const btn = document.getElementById("send");
+    const fileInput = document.getElementById("file");
+    const fd = new FormData();
+    fd.append("author", document.getElementById("author").value.trim());
+    fd.append("caption", document.getElementById("caption").value.trim());
+    fd.append("file", fileInput.files[0]);
+    btn.disabled = true; setMsg("Subiendo y procesando…");
+    try{
+      const res = await fetch(`${API}/upload`, { method: "POST", body: fd });
+      if (!res.ok){
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Error al subir la foto");
+      }
+      setMsg("Foto publicada correctamente.", "ok");
+      document.getElementById("caption").value = "";
+      fileInput.value = "";
+    }catch(e){
+      setMsg(e.message, "err");
+    }finally{
+      btn.disabled = false;
+    }
+  });
+
+  loadPhotos();
+  connect();
+</script>
+</body>
+</html>
